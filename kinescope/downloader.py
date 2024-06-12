@@ -91,18 +91,26 @@ class VideoDownloader:
                 "but not the one in this video"
             )
 
+
     def _fetch_segment(self,
                        segment_url: str,
                        file):
-        for _ in range(5):
+        print("segment_url: {segment_url}, file: {file}".format(segment_url = segment_url, file = file))
+        bytes_to_read = 0
+        bytes_readed = 0
+        chunk_size=10 * 1024
+        while True:
             try:
-                copyfileobj(
-                    BytesIO(self.http.get(segment_url, stream=True).content),
-                    file
-                )
+                with self.http.get(segment_url, stream=True, headers = {'Range' : "bytes=%s-" % (bytes_readed)}) as get_segment:
+                    bytes_to_read = int(get_segment.headers['Content-Length'])
+                    print("Download start from {start_byte}".format(start_byte=bytes_readed))
+
+                    for chunk in get_segment.iter_content(chunk_size=chunk_size):
+                        bytes_readed += chunk_size
+                        file.write(chunk)
                 return
-            except ChunkedEncodingError:
-                pass
+            except ChunkedEncodingError as e:
+                print("Error! bytes_readed %s, bytes_remained %s" % (bytes_readed, bytes_to_read))
 
         raise SegmentDownloadError(f'Failed to download segment {segment_url}')
 
@@ -133,10 +141,11 @@ class VideoDownloader:
             raise InvalidResolution('Invalid resolution specified')
 
     def _fetch_mpd_master(self) -> MPEGDASH:
-        return MPEGDASHParser.parse(self.http.get(
+        with self.http.get(
             url=self.kinescope_video.get_mpd_master_playlist_url(),
             headers={'Referer': KINESCOPE_BASE_URL}
-        ).text)
+        ) as get:
+            return MPEGDASHParser.parse(get.text)
 
     def get_resolutions(self) -> list[tuple[int, int]]:
         for adaptation_set in self.mpd_master.periods[0].adaptation_sets:
